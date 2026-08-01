@@ -302,7 +302,8 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    df = pd.DataFrame(all_results)
+    result_columns = ["method", "condition", "condition_group", "auroc", "auroc_std"]
+    df = pd.DataFrame(all_results, columns=result_columns)
     csv_path = os.path.join(args.output_dir, "climate_stress_results.csv")
     df.to_csv(csv_path, index=False)
 
