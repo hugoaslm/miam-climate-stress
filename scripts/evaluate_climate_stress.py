@@ -312,6 +312,10 @@ def main():
 
     print(f"Results saved to {csv_path} and {json_path}")
 
+    if len(df) == 0:
+        print("No results were produced. Check that checkpoints exist under --checkpoint_dir.")
+        return
+
     print("SUMMARY")
     for method in args.checkpoints:
         method_df = df[df["method"] == method]
