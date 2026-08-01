@@ -99,6 +99,15 @@ python scripts/plot_climate_stress.py \
 
 Alternatively, `notebooks/miam_climate_stress.ipynb` reproduces the full pipeline end-to-end in Google Colab.
 
+### Tests
+
+```bash
+pip install pytest
+python -m pytest tests
+```
+
+The suite covers the stress transforms (shape/dtype preservation, NaN masking, noise, shift, month dropout, seasonal masking), the empty-results guard in `evaluate_climate_stress.py`, and CSV loading in `plot_climate_stress.py`. The MIAM dependency is stubbed out, so the tests run without training data or checkpoints.
+
 ## Repository Layout
 
 ```
