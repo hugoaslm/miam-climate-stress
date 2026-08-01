@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import argparse
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from copy import deepcopy
 from typing import Dict, List, Tuple, Optional
 
