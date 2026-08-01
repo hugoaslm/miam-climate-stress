@@ -21,6 +21,22 @@ The full GeoPlant distribution is approximately 44 GB, of which roughly 40 GB co
 
 GeoPlant Presence–Absence subset (Kaggle: `picekl/geoplant`). Four input modalities are used: environmental tabular variables, Landsat time series, monthly climate time series, and Sentinel-2 satellite patches.
 
+## Results
+
+The released checkpoints were evaluated on the test split under the conditions above (satellite modality kept masked, as in the default `--no_satellite` configuration). Mean AUROC over the evaluated species:
+
+| Condition | MIAM | Dropout | Constant |
+|---|---|---|---|
+| `clean` | 0.9167 | 0.9196 | 0.8992 |
+| `climate_missing` | 0.9171 | 0.9158 | 0.8577 |
+| `climate_noise_100` | 0.8888 | 0.9153 | 0.8848 |
+| `climate_shift_p1` | 0.8179 | 0.9037 | 0.7730 |
+| `climate_shift_p2` | 0.7875 | 0.8640 | 0.7374 |
+| `climate_drop_075` | 0.9060 | 0.9154 | 0.8462 |
+| `tabular_missing` | 0.9138 | 0.9135 | 0.8993 |
+
+MIAM is essentially unaffected by the complete removal of the climate modality (Δ ≈ 0.00), whereas Constant Masking drops by 0.042, consistent with MIAM having been trained under all masking combinations. In contrast, MIAM is the most sensitive to a systematic shift of the climate values (+1σ shifts its AUROC to 0.818, versus 0.904 for Modality Dropout). Under moderate corruptions (noise, month dropout) all methods degrade monotonically and remain within a few points of their clean baseline.
+
 ## Usage
 
 ### Installation
