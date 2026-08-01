@@ -1,19 +1,3 @@
-"""
-Evaluation script for climate-modality stress testing.
-
-Loads pretrained MIAM checkpoints, evaluates under multiple stress
-conditions, and saves results as CSV/JSON.
-
-Usage:
-    python scripts/evaluate_climate_stress.py \
-        --data_dir /path/to/geoplant \
-        --checkpoints miam dropout constant \
-        --output_dir results/
-
-Or from Colab:
-    %run scripts/evaluate_climate_stress.py --data_dir /data/geoplant
-"""
-
 import os
 import sys
 import json
@@ -21,42 +5,34 @@ import argparse
 from copy import deepcopy
 from typing import Dict, List, Tuple, Optional
 
-import numpy as np
 import pandas as pd
 import torch
 import tqdm
 from torch.utils.data import DataLoader
 from torcheval.metrics.functional import binary_auroc
 
-# Add MIAM repo to path (assumes this script is in scripts/ under MIAM root)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# We'll import from maskSDM after setup; wrapped in try for safety
 try:
-    from maskSDM.config import BASE_CONFIG, setup_device, add_data_specific_parameters
-    from maskSDM.data.geoplant import get_geoplant_data, filter_species, split_data, normalize_data
+    from maskSDM.config import BASE_CONFIG, add_data_specific_parameters
+    from maskSDM.data.geoplant import (
+        get_geoplant_data,
+        filter_species,
+        split_data,
+        normalize_data,
+        GeoPlantDataset,
+    )
     from maskSDM.training.helpers import create_dataloader, seed_everything
     from maskSDM.modules.model import get_model
-    from maskSDM.modules.satellite_patches_tokenizers import get_sat_patch_tokenizer
-    from maskSDM.evaluation.helpers import evaluate
 except ImportError:
-    print("ERROR: Could not import maskSDM. Make sure you're in the MIAM repo root.")
-    print("Run: pip install -e .   from the MIAM repo")
+    print("ERROR: Could not import maskSDM. Run `pip install -e .` from the MIAM repo.")
     sys.exit(1)
 
-# Import our stress transforms
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
-from stress_transforms import (
-    TRANSFORM_REGISTRY,
-    apply_stress,
-    get_stress_condition_names,
-    get_condition_group,
-)
+from stress_transforms import TRANSFORM_REGISTRY, get_condition_group
 
-
-# ── Stress-adapted evaluate ──────────────────────────────────────────────
 
 def evaluate_with_stress(
     config: Dict,
@@ -67,15 +43,6 @@ def evaluate_with_stress(
     stress_transform: Optional[callable] = None,
     tqdm_desc: str = "Evaluation",
 ) -> Tuple[float, float]:
-    """
-    Evaluate model with optional stress transform applied to each batch.
-
-    Args:
-        stress_transform: Function(batch) -> batch, or None for clean eval.
-
-    Returns:
-        (mean_auroc, std_auroc)
-    """
     preds = []
     y_true = []
 
@@ -88,14 +55,12 @@ def evaluate_with_stress(
             X_sentinel2_batch,
         ) = batch
 
-        # Move to device
         X_tabular_batch = X_tabular_batch.to(config["device"])
         y_batch = y_batch.to(config["device"])
         X_landsat_ts_batch = X_landsat_ts_batch.to(config["device"])
         X_climatic_ts_batch = X_climatic_ts_batch.to(config["device"])
         X_sentinel2_batch = X_sentinel2_batch.to(config["device"])
 
-        # Apply stress transform
         if stress_transform is not None:
             (
                 X_tabular_batch,
@@ -111,7 +76,6 @@ def evaluate_with_stress(
                 X_sentinel2_batch,
             ))
 
-        # Compute presence masks (same as original evaluate)
         X_tabular_mask = ~X_tabular_batch.isnan()
 
         X_landsat_ts_mask = (~X_landsat_ts_batch.isnan()).mean(
@@ -122,10 +86,11 @@ def evaluate_with_stress(
             dim=-1, dtype=torch.float
         ).reshape(X_climatic_ts_batch.shape[0], -1) == 1.0
 
-        X_sentinel2_mask = torch.ones(
-            (X_sentinel2_batch.shape[0], config["sat_patch_mask_dim"]),
-            device=config["device"],
-        )
+        X_sentinel2_mask = (
+            ~X_sentinel2_batch.isnan()
+        ).all(dim=(-1, -2, -3))[:, None].expand(
+            -1, config["sat_patch_mask_dim"]
+        ).float()
 
         X_mask = torch.cat(
             [
@@ -137,7 +102,6 @@ def evaluate_with_stress(
             axis=1,
         )
 
-        # Mask out unused tokens
         not_used_tokens_idx = [
             token_names.index(tn)
             for tn in token_names
@@ -169,8 +133,6 @@ def evaluate_with_stress(
     return auc.mean().item(), auc.std().item()
 
 
-# ── Main evaluation loop ─────────────────────────────────────────────────
-
 def run_stress_evaluation(
     checkpoint_path: str,
     method_name: str,
@@ -179,19 +141,8 @@ def run_stress_evaluation(
     base_config: Dict,
     device: torch.device,
 ) -> List[Dict]:
-    """
-    Run stress evaluation for a single checkpoint.
+    print(f"Evaluating {method_name} ({checkpoint_path})")
 
-    Returns list of result dicts with keys:
-        method, condition, condition_group, auroc, auroc_std
-    """
-    print(f"\n{'='*60}")
-    print(f"Evaluating: {method_name}")
-    print(f"Checkpoint: {checkpoint_path}")
-    print(f"{'='*60}")
-
-    # Load and prepare data
-    print("Loading data...")
     data = get_geoplant_data(data_path=data_dir)
     data = filter_species(data, min_num_obs=base_config["min_num_obs"])
     data = split_data(data)
@@ -202,7 +153,6 @@ def run_stress_evaluation(
     config["device"] = device
     config = add_data_specific_parameters(config, data)
 
-    # Token names (following existing pattern)
     token_names = (
         config["tabular_column_names"]
         + config["landsat_timeseries_column_names"]
@@ -210,13 +160,11 @@ def run_stress_evaluation(
         + config["sentinel2_patches_column_names"]
     )
 
-    # Create dataloader
     test_loader = create_dataloader(
         config, data, split="test", shuffle=False,
         batch_size=config["val_test_batch_size"]
     )
 
-    # Load model
     sat_tokenizer_kwargs = {
         k.replace("get_sat_patch_tokenizer__", ""): v
         for k, v in config.items()
@@ -240,7 +188,7 @@ def run_stress_evaluation(
                 model=model,
                 dataloader=test_loader,
                 token_names=token_names,
-                used_token_names=token_names,  # use all tokens
+                used_token_names=token_names,
                 stress_transform=stress_fn,
                 tqdm_desc=f"{method_name}/{condition}",
             )
@@ -259,61 +207,41 @@ def run_stress_evaluation(
     return results
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Climate-modality stress testing for MIAM"
     )
-    parser.add_argument(
-        "--data_dir", type=str, required=True,
-        help="Path to GeoPlant data directory"
-    )
-    parser.add_argument(
-        "--checkpoints", type=str, nargs="+",
-        default=["miam", "dropout", "constant"],
-        help="Methods to evaluate"
-    )
-    parser.add_argument(
-        "--checkpoint_dir", type=str, default="models",
-        help="Directory containing method subdirectories with .pt files"
-    )
-    parser.add_argument(
-        "--conditions", type=str, nargs="+",
-        default=None,
-        help="Specific stress conditions to run (default: all)"
-    )
-    parser.add_argument(
-        "--output_dir", type=str, default="results",
-        help="Directory for output files"
-    )
-    parser.add_argument(
-        "--batch_size", type=int, default=512,
-        help="Evaluation batch size"
-    )
-    parser.add_argument(
-        "--seed", type=int, default=42,
-        help="Random seed"
-    )
+    parser.add_argument("--data_dir", type=str, required=True,
+                        help="Path to GeoPlant data directory")
+    parser.add_argument("--checkpoints", type=str, nargs="+",
+                        default=["miam", "dropout", "constant"],
+                        help="Methods to evaluate")
+    parser.add_argument("--checkpoint_dir", type=str, default="models",
+                        help="Directory containing method subdirectories with .pt files")
+    parser.add_argument("--conditions", type=str, nargs="+", default=None,
+                        help="Specific stress conditions to run (default: all)")
+    parser.add_argument("--output_dir", type=str, default="results",
+                        help="Directory for output files")
+    parser.add_argument("--no_satellite", action="store_true",
+                        help="Disable the satellite-patch modality (avoids the ~40 GB patch files)")
+    parser.add_argument("--batch_size", type=int, default=512,
+                        help="Evaluation batch size")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    # Setup
     seed_everything(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
-    # Base config
     base_config = deepcopy(BASE_CONFIG)
     base_config["device"] = device
     base_config["val_test_batch_size"] = args.batch_size
     base_config["data_dir"] = args.data_dir
     base_config["seed"] = args.seed
 
-    # Which conditions to run
     if args.conditions:
         conditions = args.conditions
     else:
@@ -332,7 +260,12 @@ def main():
             "tabular_missing",
         ]
 
-    # Checkpoint name mapping
+    if args.no_satellite:
+        conditions = [c for c in conditions if "satellite_missing" not in c]
+        GeoPlantDataset._get_RGBN_patch = lambda self, idx: torch.full(
+            (4, 128, 128), float("nan")
+        )
+
     checkpoint_files = {
         "miam": "miam.pt",
         "dropout": "dropout.pt",
@@ -350,7 +283,6 @@ def main():
 
         if not os.path.exists(ckpt_path):
             print(f"WARNING: Checkpoint not found: {ckpt_path}")
-            print("  Download from: hf download zbirobin/MIAM geoplant_{method}.pt")
             continue
 
         try:
@@ -368,25 +300,19 @@ def main():
             import traceback
             traceback.print_exc()
 
-    # Save results
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # CSV
     df = pd.DataFrame(all_results)
     csv_path = os.path.join(args.output_dir, "climate_stress_results.csv")
     df.to_csv(csv_path, index=False)
-    print(f"\nResults saved to: {csv_path}")
 
-    # JSON
     json_path = os.path.join(args.output_dir, "climate_stress_results.json")
     with open(json_path, "w") as f:
         json.dump(all_results, f, indent=2)
-    print(f"Results saved to: {json_path}")
 
-    # Quick summary
-    print(f"\n{'='*60}")
+    print(f"Results saved to {csv_path} and {json_path}")
+
     print("SUMMARY")
-    print(f"{'='*60}")
     for method in args.checkpoints:
         method_df = df[df["method"] == method]
         if len(method_df) == 0:

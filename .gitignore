@@ -10,7 +10,7 @@ build/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
+!notebooks/*.ipynb
 
 # Results & figures (generated, not committed)
 results/

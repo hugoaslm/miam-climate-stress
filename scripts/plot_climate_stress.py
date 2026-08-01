@@ -1,24 +1,10 @@
-"""
-Plotting script for climate-modality stress test results.
-
-Generates 4-5 publication-quality figures from the evaluation CSV.
-
-Usage:
-    python scripts/plot_climate_stress.py --results results/climate_stress_results.csv
-"""
-
 import argparse
 import os
 import sys
-from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import seaborn as sns
-
-# ── Style ────────────────────────────────────────────────────────────────
 
 plt.rcParams.update({
     "figure.dpi": 150,
@@ -30,12 +16,12 @@ plt.rcParams.update({
 })
 
 METHOD_COLORS = {
-    "miam": "#2ecc71",       # green
-    "dropout": "#e74c3c",    # red
-    "constant": "#3498db",   # blue
-    "opm": "#9b59b6",        # purple
-    "dirichlet": "#f39c12",  # orange
-    "uniform": "#1abc9c",    # teal
+    "miam": "#2ecc71",
+    "dropout": "#e74c3c",
+    "constant": "#3498db",
+    "opm": "#9b59b6",
+    "dirichlet": "#f39c12",
+    "uniform": "#1abc9c",
 }
 
 METHOD_LABELS = {
@@ -49,7 +35,6 @@ METHOD_LABELS = {
 
 
 def load_results(csv_path: str) -> pd.DataFrame:
-    """Load and validate results CSV."""
     df = pd.read_csv(csv_path)
 
     required_cols = {"method", "condition", "auroc"}
@@ -57,7 +42,6 @@ def load_results(csv_path: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"CSV missing required columns: {missing}")
 
-    # Add derived columns
     if "clean" in df["condition"].values:
         clean_scores = df[df["condition"] == "clean"].set_index("method")["auroc"]
         df["clean_auroc"] = df["method"].map(clean_scores)
@@ -67,10 +51,7 @@ def load_results(csv_path: str) -> pd.DataFrame:
     return df
 
 
-# ── Figure 1: Clean vs Stressed Performance ──────────────────────────────
-
 def plot_clean_vs_stress(df: pd.DataFrame, output_path: str):
-    """Bar chart comparing methods under key stress conditions."""
     key_conditions = [
         "clean",
         "climate_missing",
@@ -116,7 +97,6 @@ def plot_clean_vs_stress(df: pd.DataFrame, output_path: str):
             linewidth=0.5,
         )
 
-        # Add value labels
         for bar, score in zip(bars, scores):
             if not np.isnan(score):
                 ax.text(
@@ -140,10 +120,7 @@ def plot_clean_vs_stress(df: pd.DataFrame, output_path: str):
     plt.close(fig)
 
 
-# ── Figure 2: Performance Drop by Missing Modality ───────────────────────
-
 def plot_modality_ablation_drop(df: pd.DataFrame, output_path: str):
-    """Bar chart showing ΔAUROC when each modality is removed."""
     ablation_conditions = {
         "climate_missing": "Climate\ntimeseries",
         "satellite_missing": "Satellite\npatches",
@@ -195,10 +172,7 @@ def plot_modality_ablation_drop(df: pd.DataFrame, output_path: str):
     plt.close(fig)
 
 
-# ── Figure 3: Climate Noise Robustness Curve ─────────────────────────────
-
 def plot_climate_noise_curve(df: pd.DataFrame, output_path: str):
-    """Line plot: noise level vs AUROC for each method."""
     noise_conditions = {
         "clean": 0.0,
         "climate_noise_025": 0.25,
@@ -210,7 +184,6 @@ def plot_climate_noise_curve(df: pd.DataFrame, output_path: str):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
 
-    # Left: absolute AUROC
     for method in methods:
         method_df = df[df["method"] == method]
         xs, ys = [], []
@@ -231,7 +204,6 @@ def plot_climate_noise_curve(df: pd.DataFrame, output_path: str):
     ax1.legend(fontsize=8)
     ax1.grid(alpha=0.3)
 
-    # Right: robustness ratio
     for method in methods:
         method_df = df[df["method"] == method]
         clean_row = method_df[method_df["condition"] == "clean"]
@@ -265,10 +237,7 @@ def plot_climate_noise_curve(df: pd.DataFrame, output_path: str):
     plt.close(fig)
 
 
-# ── Figure 4: Month Dropout Robustness ───────────────────────────────────
-
 def plot_month_dropout_curve(df: pd.DataFrame, output_path: str):
-    """Line plot: fraction of climate months dropped vs AUROC."""
     drop_conditions = {
         "clean": 0.0,
         "climate_drop_025": 0.25,
@@ -308,10 +277,7 @@ def plot_month_dropout_curve(df: pd.DataFrame, output_path: str):
     plt.close(fig)
 
 
-# ── Figure 5: Robustness Summary (heatmap) ───────────────────────────────
-
 def plot_robustness_summary(df: pd.DataFrame, output_path: str):
-    """Heatmap showing ΔAUROC for each method × condition."""
     display_conditions = [
         "climate_missing",
         "climate_noise_025",
@@ -342,7 +308,6 @@ def plot_robustness_summary(df: pd.DataFrame, output_path: str):
 
     methods = sorted(df["method"].unique())
 
-    # Build matrix
     heatmap_data = {}
     for method in methods:
         method_df = df[df["method"] == method]
@@ -373,7 +338,6 @@ def plot_robustness_summary(df: pd.DataFrame, output_path: str):
                    vmin=max(0, np.nanmin(data_matrix)),
                    vmax=np.nanmax(data_matrix))
 
-    # Annotate cells
     for i in range(len(method_names)):
         for j in range(len(display_conditions)):
             val = data_matrix[i, j]
@@ -396,8 +360,6 @@ def plot_robustness_summary(df: pd.DataFrame, output_path: str):
     print(f"Saved: {output_path}")
     plt.close(fig)
 
-
-# ── Main ─────────────────────────────────────────────────────────────────
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Plot climate stress results")
@@ -426,7 +388,6 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     fmt = args.format
 
-    # Generate all figures
     figures = [
         (plot_clean_vs_stress, "clean_vs_stress"),
         (plot_modality_ablation_drop, "modality_ablation_drop"),
